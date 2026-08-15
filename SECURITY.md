@@ -1,62 +1,52 @@
 # Política de seguridad
 
-HeliosRestakeProtocol protege custodia de staking tokens, receipt shares,
-delegación a operadores, recompensas por epoch, slashing y retiradas diferidas.
+## Versiones mantenidas
 
-## Alcance
+| Serie | Estado | Rama |
+| --- | --- | --- |
+| 1.0.x | Mantenida | `production` |
+| anteriores | Sin mantenimiento | — |
 
-Dentro del alcance:
+## Comunicación responsable
 
-- contratos bajo `src/`;
-- pruebas públicas en `test/`;
-- scripts de despliegue y CI;
-- comportamiento económico alrededor de staking, delegación, rewards, slashing y
-  retiradas.
+Utiliza **Security → Report a security issue** en GitHub. No publiques detalles sensibles en incidencias, solicitudes o discusiones. Incluye commit, red, contrato, función, precondiciones, impacto económico, reproducción mínima y propuesta de corrección.
 
-Fuera del alcance:
+Confirmaremos recepción en dos días laborables y entregaremos una clasificación inicial en cinco. La coordinación pública se realiza tras distribuir una corrección y verificar la migración.
 
-- supply chain del tooling local de Foundry;
-- sistemas externos de multisig, timelock, oráculos o monitorización;
-- micro-optimizaciones de gas sin impacto en seguridad o accounting.
-
-## Supuestos de seguridad
-
-- Los operadores se registran bajo límites de capacidad configurados.
-- Los rewards se financian por epoch antes de su distribución.
-- Las retiradas respetan delay y bloqueo de receipt shares.
-- Las solicitudes de slashing incluyen evidencia y siguen el flujo de estado
-  configurado.
-- Las funciones de gobierno y pausa están restringidas por roles.
-
-## Invariantes esperadas
-
-- Las receipt shares emitidas reflejan staking token custodiado, menos estados de
-  penalización correctamente contabilizados.
-- Las shares bloqueadas por retirada no deben poder volver a delegarse.
-- Los rewards solo se distribuyen sobre shares elegibles del epoch.
-- El slashing reduce exposición de operador y actualiza reservas de forma
-  consistente.
-- Las rutas de claim, exit y slashing no deben romper accounting global.
-
-## Validación local
-
-```bash
-forge fmt --check
-forge build
-forge test
-bash scripts/ci.sh
+```mermaid
+sequenceDiagram
+    participant R as Remitente
+    participant S as Seguridad
+    participant E as Ingeniería
+    participant O as Operaciones
+    R->>S: informe privado
+    S-->>R: acuse y referencia
+    S->>E: clasificación y reproducción
+    E->>O: corrección y migración
+    O-->>S: estado verificado
+    S-->>R: divulgación coordinada
 ```
 
-## Reporte responsable
+## Perímetro
 
-Un reporte debe incluir:
+Incluye custodia, conversión de shares, bloqueos, delegación, recompensas, cola, slashing, roles, reserva, librerías matemáticas, despliegue e integridad de artefactos. Las claves y proveedores RPC pertenecen al entorno del operador.
 
-- contrato y función afectados;
-- secuencia mínima de verificación;
-- impacto contable o económico;
-- precondiciones;
-- comportamiento esperado y observado;
-- propuesta de mitigación;
-- tests recomendados.
+## Publicación segura
 
-No incluyas claves privadas, credenciales ni datos de terceros.
+```mermaid
+flowchart LR
+    C["Cambio revisado"] --> F["forge fmt"]
+    F --> B["forge build"]
+    B --> T["tests y fuzz"]
+    T --> I["integridad"]
+    I --> M["Linux y Windows"]
+    M --> P["production"]
+    P --> G["tag anotado"]
+    G --> R["release"]
+```
+
+`main`, `production` y el commit pelado de la etiqueta deben coincidir. Los cambios de roles, tiempos, límites y BPS requieren revisión separada y simulación de transición.
+
+## Respuesta
+
+Ante una señal confirmada, el guardián aplica la pausa mínima necesaria, preserva bloque y eventos, reconcilia activo, shares, cola y reserva, y documenta reanudación o migración. Una pausa no altera por sí misma derechos históricos.
