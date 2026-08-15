@@ -22,5 +22,5 @@
 .DS_Store
 Thumbs.db
 
-# Documentación interna
-vulnerability.md
+# Evidence generated outside the public suite
+/test/private/
