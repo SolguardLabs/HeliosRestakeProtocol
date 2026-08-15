@@ -1,0 +1,45 @@
+name: Release integrity
+
+on:
+  push:
+    branches: [main, production]
+    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-integrity-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      FOUNDRY_PROFILE: ci
+    steps:
+      - name: Checkout published ref
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Solidity dependencies
+        run: forge install foundry-rs/forge-std --no-git
+      - name: Validate protocol
+        run: python scripts/ci.py
+      - name: Verify published reference
+        env:
+          VERIFY_EVENT: ${{ github.event_name }}
+          VERIFY_REF_TYPE: ${{ github.ref_type }}
+          VERIFY_REF_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: python scripts/verify_published_ref.py
