@@ -1,137 +1,144 @@
+![HeliosRestakeProtocol](assets/banner.png)
+
 # Helios Restake Protocol
 
-![banner](./assets/banner.png)
-
-HeliosRestakeProtocol es una implementación Solidity/Foundry de un sistema de
-restaking con receipt shares transferibles, delegación a operadores, recompensas
-por epoch y cola de retiradas diferidas. Los usuarios depositan un staking token,
-reciben `hrsSTK`, delegan exposición operativa y reclaman recompensas distribuidas
-por índice.
-
-El repositorio separa custodia, accounting de operadores, delegación,
-distribución de rewards, retiradas, slashing, controles de riesgo, comisiones y
-vistas de monitorización.
+Helios es un protocolo modular de restaking escrito en Solidity 0.8.26. Convierte activos depositados en shares ERC-20, distribuye delegación entre operadores, procesa salidas diferidas, contabiliza recompensas por época y ejecuta slashes con evidencia y demora operativa.
 
 ## Arquitectura
 
-```text
-                        +----------------+
-                        | HeliosAccess   |
-                        +-------+--------+
-                                |
-      +-------------------------+-------------------------+
-      |                         |                         |
-+-----v------+          +-------v------+          +-------v------+
-| Operators  |          | EpochRewards |          | Slashing     |
-| registry   |          | reward index |          | controller   |
-+-----+------+          +-------+------+          +-------+------+
-      |                         |                         |
-      +-------------+-----------+-----------+-------------+
-                    |                       |
-              +-----v-----------------------v-----+
-              | HeliosRestakeVault               |
-              | deposits, shares, exits, slash    |
-              +---+--------------+-----------+----+
-                  |              |           |
-          +-------v-----+ +------v------+ +--v-----------+
-          | Receipt ERC20| | Withdrawal | | ReserveVault |
-          | hrsSTK       | | queue      | | penalties    |
-          +-------------+ +-------------+ +--------------+
+```mermaid
+flowchart LR
+    U["Restaker"] --> V["HeliosRestakeVault"]
+    V --> T["Receipt Token"]
+    V --> D["Delegation Manager"]
+    D --> O["Operator Registry"]
+    V --> W["Withdrawal Queue"]
+    V --> E["Epoch Rewarder"]
+    V --> S["Slashing Controller"]
+    S --> R["Reserve Vault"]
+    V --> L["Lens and Monitor"]
 ```
 
-## Contratos principales
+| Módulo | Responsabilidad |
+| --- | --- |
+| `HeliosRestakeVault` | custodia, conversión y coordinación |
+| `HeliosReceiptToken` | shares transferibles, bloqueadas y activas |
+| `DelegationManager` | posición del usuario y cooldown |
+| `OperatorRegistry` | límites, estado y contabilidad por operador |
+| `WithdrawalQueue` | solicitudes, ventanas y rondas |
+| `EpochRewarder` | financiación e índice por share elegible |
+| `SlashingController` | propuesta, evidencia, espera y ejecución |
+| `ReserveVault` | activos trasladados por slash |
+| `ExitLiquidityStress` | proyección observacional de liquidez |
 
-- `HeliosRestakeVault`: custodia y punto de entrada para stake, delegate,
-  undelegate, withdrawal requests, reward claims y slashing callbacks.
-- `HeliosReceiptToken`: receipt shares ERC-20 con balances bloqueados para
-  retiradas pendientes.
-- `OperatorRegistry`: alta de operadores, límites de capacidad y accounting de
-  slash/reward.
-- `DelegationManager`: tracking de shares delegadas por usuario.
-- `WithdrawalQueue`: solicitudes de retirada diferida e historial de requests.
-- `EpochRewarder`: funding de epochs y distribución por índice sobre shares
-  delegadas.
-- `SlashingController`: solicitudes diferidas de slashing con evidence hashes y
-  ejecución permissionless cuando están listas.
-- `ReserveVault`: almacena staking tokens slashados y reservas del protocolo.
-- `RiskController`, `FeeController`, `HeliosAccounting`, `EpochPolicy`: módulos
-  operativos de soporte.
-- `HeliosLens` y `HeliosMonitor`: lecturas agregadas para dashboards, keepers y
-  monitores.
+## Conversión de shares
 
-## Flujo operativo
+```text
+shares = assets × totalSupply / totalPooledAssets
+assets = shares × totalPooledAssets / totalSupply
+rateRay = totalPooledAssets × 10²⁷ / totalSupply
+```
 
-1. Los usuarios depositan staking tokens y reciben `hrsSTK`.
-2. Las shares se delegan a operadores registrados dentro de sus límites de
-   capacidad.
-3. Los rewards se financian por epoch y se distribuyen mediante índices
-   acumulados.
-4. Las retiradas pasan por una cola con delay antes de ejecutarse.
-5. Las solicitudes de slashing siguen una ventana de revisión y ejecución.
-6. Las vistas agregadas exponen balances, delegaciones, rewards y estado de
-   riesgo.
+El primer depósito usa relación 1:1. Después, ganancias y pérdidas modifican el tipo para todas las shares.
 
-## Seguridad y controles
+```mermaid
+sequenceDiagram
+    participant U as Usuario
+    participant V as Vault
+    participant T as Receipt Token
+    participant D as Delegation
+    U->>V: stake assets
+    V->>V: preview deposit
+    V->>T: mint shares
+    U->>V: delegate operator shares
+    V->>D: update account
+    D-->>U: delegated position
+```
 
-- Separación de roles para gobierno, guardianes, operadores de rewards y
-  slashing.
-- Límites de capacidad por operador.
-- Cola de retiradas con locking de receipt shares.
-- Slashing diferido con evidence hashes y estado auditable.
-- Accounting separado para reservas, penalties y comisiones.
-- Pausas operativas y controles de riesgo por módulo.
+## Slashing
 
-Consulta [SECURITY.md](./SECURITY.md) para el alcance de revisión y el proceso
-de reporte responsable.
+Una solicitud incluye operador, BPS, proponente, evidencia y `executableAt`. La demora permite observación y cancelación por gobierno o guardián antes de reducir activos y trasladarlos a la reserva.
 
-## Requisitos
+```mermaid
+stateDiagram-v2
+    [*] --> Queued: queue slash
+    Queued --> Cancelled: guardian cancel
+    Queued --> Executable: delay elapsed
+    Executable --> Executed: keeper executes
+    Cancelled --> [*]
+    Executed --> [*]
+```
 
-- Foundry (`forge`, `cast`, `anvil`).
-- Solidity `0.8.26`.
+## Salidas
 
-## Uso local
+Las shares deben estar libres de delegación. La solicitud las bloquea y registra receptor, mínimo, época, instante reclamable y caducidad. La cancelación devuelve disponibilidad; la ejecución quema shares y transfiere activos.
+
+```mermaid
+flowchart LR
+    F["Free shares"] --> Q["Request"]
+    Q --> K["Locked shares"]
+    K --> C{"Window"}
+    C -- cancel --> F
+    C -- claim --> B["Burn shares"]
+    B --> P["Transfer assets"]
+    C -- expired --> X["Operational recovery"]
+```
+
+## Modelo de estrés
+
+`ExitLiquidityStress` calcula slash, recorte de liquidez, reserva recuperable, obligación activa y en cola, cobertura, backing activo, tipo proyectado y déficit. Es puro y no puede cambiar el estado del protocolo.
+
+```text
+activeLiability = activeShares × pooledAssets / receiptSupply
+postShock = (pooledAssets - slashLoss) - liquidityLoss
+effectiveAssets = postShock + recoverableReserve
+totalLiability = queuedAssets + activeLiability
+capitalShortfall = max(totalLiability - effectiveAssets, 0)
+```
+
+## Inicio rápido
+
+Requisitos: Foundry estable y Git.
 
 ```bash
+forge install foundry-rs/forge-std --no-git
+forge fmt --check
 forge build
 forge test
+python scripts/verify_release.py
 ```
-
-Scripts del proyecto:
-
-```bash
-bash scripts/tests.sh
-bash scripts/ci.sh
-```
-
-Ejecuciones focalizadas:
-
-```bash
-forge test --match-path test/Slashing.t.sol -vv
-forge test --match-test testEpochRewardsAreDistributedByDelegatedShares -vv
-```
-
-## Flujos cubiertos por tests
-
-- depósitos de staking y mint de receipt shares;
-- delegación y undelegation de operadores;
-- funding, finalización y claim de rewards por epoch;
-- solicitud, cancelación y ejecución diferida de retiradas;
-- cola, cancelación y ejecución de slashing;
-- controles de pausa y snapshots de accounting.
 
 ## Despliegue
 
-`script/DeployHelios.s.sol` espera estas variables:
-
 ```bash
-STAKING_TOKEN=0x...
-REWARD_TOKEN=0x...
-GOVERNOR=0x...
-GUARDIAN=0x...
-```
-
-Ejecución:
-
-```bash
+export STAKING_TOKEN=0x...
+export REWARD_TOKEN=0x...
+export GOVERNOR=0x...
+export GUARDIAN=0x...
 forge script script/DeployHelios.s.sol:DeployHelios --rpc-url "$RPC_URL" --broadcast
 ```
+
+Verifica bytecode, roles, direcciones y parámetros antes de autorizar actividad. El script no almacena claves.
+
+## Calidad
+
+La suite pública contiene pruebas unitarias, fuzzing y escenarios integrados de stake, delegación, recompensas, cola y slashing. La CI compila con Solc 0.8.26 y repite la puerta en Ubuntu y Windows.
+
+## Documentación
+
+- [Arquitectura](docs/arquitectura.md)
+- [Contabilidad de shares](docs/contabilidad-shares.md)
+- [Delegación y operadores](docs/delegacion-operadores.md)
+- [Salidas y liquidez](docs/salidas-liquidez.md)
+- [Slashing y reserva](docs/slashing-reserva.md)
+- [Operación](docs/operacion.md)
+- [Gobernanza](docs/gobernanza.md)
+- [Política de seguridad](SECURITY.md)
+
+## Publicación
+
+La rama `production` y la etiqueta anotada `v1.0.0` deben apuntar al mismo commit aprobado en `main`. La versión se publica como `Production 1.0.0` después de superar las matrices independientes.
+
+## Licencia
+
+MIT. Consulta [LICENSE](LICENSE).

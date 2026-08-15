@@ -1,0 +1,7 @@
+{
+  "name": "Production 1.0.0",
+  "version": "1.0.0",
+  "solidity": "0.8.26",
+  "evm": "cancun",
+  "tag": "v1.0.0"
+}

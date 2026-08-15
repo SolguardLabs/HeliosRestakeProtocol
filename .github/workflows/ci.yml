@@ -1,18 +1,38 @@
-name: ci
+name: CI
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  forge:
-    runs-on: ubuntu-latest
+  quality:
+    name: Foundry / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      FOUNDRY_PROFILE: ci
     steps:
-      - uses: actions/checkout@v7
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Install dependencies
+      - name: Install Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Solidity dependencies
         run: forge install foundry-rs/forge-std --no-git
-      - name: Validate
-        run: bash scripts/ci.sh
+      - name: Validate protocol
+        run: python scripts/ci.py
